@@ -149,6 +149,15 @@ export const AgentDefaultsSchema = z
     typingIntervalSeconds: z.number().int().positive().optional(),
     typingMode: TypingModeSchema.optional(),
     heartbeat: HeartbeatSchema,
+    promptMode: z.enum(["full", "minimal", "nano"]).optional(),
+    intentRouter: z
+      .object({
+        enabled: z.boolean().optional(),
+        model: z.string().optional(),
+        provider: z.string().optional(),
+        apiKey: z.string().optional(),
+      })
+      .optional(),
     maxConcurrent: z.number().int().positive().optional(),
     subagents: z
       .object({

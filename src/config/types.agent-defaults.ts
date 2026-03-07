@@ -261,6 +261,28 @@ export type AgentDefaultsConfig = {
      */
     includeReasoning?: boolean;
   };
+  /**
+   * Ultra-low-token mode: use a cheap LLM to route intent before calling the main LLM.
+   * - "full": standard full prompt (default)
+   * - "minimal": reduced sections for subagents
+   * - "nano": ultra-compact prompt (< 600 tokens); requires intentRouter for best results
+   */
+  promptMode?: "full" | "minimal" | "nano";
+  /**
+   * Intent router configuration for nano mode.
+   * A cheap model (e.g. Haiku) analyses the user query to select tools and workspace context,
+   * keeping the main LLM request under 3,000 tokens total.
+   */
+  intentRouter?: {
+    /** Enable the intent router (default: true when promptMode is "nano"). */
+    enabled?: boolean;
+    /** Model ID for the router (default: "claude-haiku-4-5-20251001"). */
+    model?: string;
+    /** Provider for the router model (default: "anthropic"). */
+    provider?: string;
+    /** Optional API key override (defaults to environment variable). */
+    apiKey?: string;
+  };
   /** Max concurrent agent runs across all conversations. Default: 1 (sequential). */
   maxConcurrent?: number;
   /** Sub-agent defaults (spawned via sessions_spawn). */

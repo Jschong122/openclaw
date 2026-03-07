@@ -124,6 +124,9 @@ import {
 import { pruneProcessedHistoryImages } from "./history-image-prune.js";
 import { detectAndLoadPromptImages } from "./images.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
+import { routeIntent } from "../../intent-router.js";
+import { selectToolsByCategory } from "../../tool-selector.js";
+import { retrieveWorkspaceContext } from "../../workspace-indexer.js";
 
 type PromptBuildHookRunner = {
   hasHooks: (hookName: "before_prompt_build" | "before_agent_start") => boolean;
@@ -599,17 +602,46 @@ export async function runEmbeddedAttempt(
       workspaceDir: effectiveWorkspace,
     });
 
-    const sessionLabel = params.sessionKey ?? params.sessionId;
-    const { bootstrapFiles: hookAdjustedBootstrapFiles, contextFiles } =
-      await resolveBootstrapContextForRun({
-        workspaceDir: effectiveWorkspace,
-        config: params.config,
-        sessionKey: params.sessionKey,
-        sessionId: params.sessionId,
-        warn: makeBootstrapWarn({ sessionLabel, warn: (message) => log.warn(message) }),
-        contextMode: params.bootstrapContextMode,
-        runKind: params.bootstrapContextRunKind,
+    // ── Nano-mode: cheap LLM router + QMD context retrieval ──────────────────
+    const useNanoMode = params.config?.agents?.defaults?.promptMode === "nano";
+    const routerCfg = params.config?.agents?.defaults?.intentRouter;
+    let nanoRouterDecision: Awaited<ReturnType<typeof routeIntent>> | null = null;
+    let nanoRetrievedContext = "";
+
+    if (useNanoMode && routerCfg?.enabled !== false) {
+      nanoRouterDecision = await routeIntent({
+        userQuery: params.prompt,
+        routerModel: routerCfg?.model ?? "claude-haiku-4-5-20251001",
+        routerProvider: routerCfg?.provider ?? "anthropic",
+        apiKey: routerCfg?.apiKey,
       });
+
+      const { defaultAgentId: nanoDefaultAgentId } = resolveSessionAgentIds({
+        sessionKey: params.sessionKey,
+        config: params.config,
+        agentId: params.agentId,
+      });
+      nanoRetrievedContext = await retrieveWorkspaceContext({
+        searchQuery: nanoRouterDecision.searchQuery,
+        agentId: nanoDefaultAgentId,
+        config: params.config,
+      });
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const sessionLabel = params.sessionKey ?? params.sessionId;
+    // Nano mode skips full bootstrap to avoid token bloat
+    const { bootstrapFiles: hookAdjustedBootstrapFiles, contextFiles } = useNanoMode
+      ? { bootstrapFiles: [], contextFiles: [] }
+      : await resolveBootstrapContextForRun({
+          workspaceDir: effectiveWorkspace,
+          config: params.config,
+          sessionKey: params.sessionKey,
+          sessionId: params.sessionId,
+          warn: makeBootstrapWarn({ sessionLabel, warn: (message) => log.warn(message) }),
+          contextMode: params.bootstrapContextMode,
+          runKind: params.bootstrapContextRunKind,
+        });
     const bootstrapMaxChars = resolveBootstrapMaxChars(params.config);
     const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(params.config);
     const bootstrapAnalysis = analyzeBootstrapBudget({
@@ -689,7 +721,12 @@ export async function runEmbeddedAttempt(
             params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
           disableMessageTool: params.disableMessageTool,
         });
-    const tools = sanitizeToolsForGoogle({ tools: toolsRaw, provider: params.provider });
+    // Nano mode: filter tools to only those selected by the router
+    const toolsFiltered =
+      useNanoMode && nanoRouterDecision
+        ? selectToolsByCategory(nanoRouterDecision.neededToolCategories, toolsRaw)
+        : toolsRaw;
+    const tools = sanitizeToolsForGoogle({ tools: toolsFiltered, provider: params.provider });
     const allowedToolNames = collectAllowedToolNames({
       tools,
       clientTools: params.clientTools,
@@ -784,7 +821,11 @@ export async function runEmbeddedAttempt(
       },
     });
     const isDefaultAgent = sessionAgentId === defaultAgentId;
-    const promptMode = resolvePromptModeForSession(params.sessionKey);
+    // Nano mode overrides the prompt mode; otherwise derive from session key
+    const effectivePromptMode = useNanoMode
+      ? (nanoRouterDecision?.replyStyle ?? "nano")
+      : resolvePromptModeForSession(params.sessionKey);
+    const promptMode = effectivePromptMode;
     const docsPath = await resolveOpenClawDocsPath({
       workspaceDir: effectiveWorkspace,
       argv1: process.argv[1],
@@ -821,8 +862,11 @@ export async function runEmbeddedAttempt(
       userTimezone,
       userTime,
       userTimeFormat,
-      contextFiles,
-      bootstrapTruncationWarningLines: bootstrapPromptWarning.lines,
+      contextFiles:
+        useNanoMode && nanoRetrievedContext
+          ? [{ path: "Retrieved Context", content: nanoRetrievedContext }]
+          : contextFiles,
+      bootstrapTruncationWarningLines: useNanoMode ? [] : bootstrapPromptWarning.lines,
       memoryCitationsMode: params.config?.memory?.citations,
     });
     const systemPromptReport = buildSystemPromptReport({

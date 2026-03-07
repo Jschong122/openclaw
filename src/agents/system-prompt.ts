@@ -13,8 +13,9 @@ import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
  * - "full": All sections (default, for main agent)
  * - "minimal": Reduced sections (Tooling, Workspace, Runtime) - used for subagents
  * - "none": Just basic identity line, no sections
+ * - "nano": Ultra-compact prompt for low-token mode (< 600 tokens); used with intent router
  */
-export type PromptMode = "full" | "minimal" | "none";
+export type PromptMode = "full" | "minimal" | "none" | "nano";
 type OwnerIdDisplay = "raw" | "hash";
 
 function buildSkillsSection(params: { skillsPrompt?: string; readToolName: string }) {
@@ -416,6 +417,30 @@ export function buildAgentSystemPrompt(params: {
   // For "none" mode, return just the basic identity line
   if (promptMode === "none") {
     return "You are a personal assistant running inside OpenClaw.";
+  }
+
+  // For "nano" mode, return a minimal prompt (< 600 tokens) for low-token operation
+  if (promptMode === "nano") {
+    const nanoLines = [
+      "You are an autonomous assistant in OpenClaw.",
+      `Rules: use tools as needed; keep replies concise; reply ${SILENT_REPLY_TOKEN} when nothing to say.`,
+      "",
+      `## Workspace\n${displayWorkspaceDir}`,
+      "",
+    ];
+    if (toolLines.length > 0) {
+      nanoLines.push("## Tools", toolLines.join("\n"), "");
+    }
+    const nanoContextFiles = (params.contextFiles ?? []).filter(
+      (f) => typeof f.path === "string" && f.path.trim().length > 0,
+    );
+    if (nanoContextFiles.length > 0) {
+      nanoLines.push("## Context");
+      for (const file of nanoContextFiles) {
+        nanoLines.push(`### ${file.path}`, file.content, "");
+      }
+    }
+    return nanoLines.join("\n");
   }
 
   const lines = [
