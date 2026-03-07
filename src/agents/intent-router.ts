@@ -126,7 +126,7 @@ export async function routeIntent(params: {
 
     const context = {
       systemPrompt: ROUTER_SYSTEM_PROMPT,
-      messages: [{ role: "user" as const, content: truncatedQuery }],
+      messages: [{ role: "user" as const, content: truncatedQuery, timestamp: Date.now() }],
     };
 
     const result = await completeSimple(model as Parameters<typeof completeSimple>[0], context, {
