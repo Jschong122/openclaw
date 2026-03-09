@@ -924,7 +924,7 @@ export async function runEmbeddedAttempt(
     const tools = sanitizeToolsForGoogle({ tools: toolsFiltered, provider: params.provider });
     const allowedToolNames = collectAllowedToolNames({
       tools,
-      clientTools,
+      clientTools: params.clientTools,
     });
     logToolSchemasForGoogle({ tools, provider: params.provider });
 
@@ -1196,9 +1196,9 @@ export async function runEmbeddedAttempt(
         cfg: params.config,
         agentId: sessionAgentId,
       });
-      const clientToolDefs = clientTools
+      const clientToolDefs = params.clientTools
         ? toClientToolDefinitions(
-          clientTools,
+          params.clientTools,
           (toolName, toolParams) => {
             clientToolCallDetected = { name: toolName, params: toolParams };
           },
